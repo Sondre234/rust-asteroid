@@ -1,7 +1,9 @@
+use bevy::math::ops::abs;
 use bevy::{
     log::tracing_subscriber::field::debug,
     math::ops::{cos, sin},
 };
+use macroquad::input::KeyCode::Space;
 use macroquad::prelude::*;
 use std::cmp::Ordering;
 
@@ -16,69 +18,34 @@ const ASTEROID_SPEED: f32 = 0.5;
 const BULLET_SIZE: f32 = 2.0;
 const BULLET_COLOR: Color = GREEN;
 
+const FRAME_RATE: f32 = 0.001;
+
 #[macroquad::main("Main")]
 async fn main() {
-    let mut num_lives: u16 = 100;
-    let mut player = Player::default_player();
     clear_background(BLACK);
+
     let mut bullets: Vec<Bullet> = Vec::new();
     let mut asteroids: Vec<Asteroid> = Vec::new();
 
-    loop {
-        let player_position = player.parse_x();
-        if num_lives == 0 {
-            print!("Game over");
-        }
-        if is_key_pressed(KeyCode::Space) {
-            let mut bullet = Bullet {
-                x: player.x.x,
-                y: player.x.y,
-            };
-            bullets.push(bullet);
-        }
-        if is_key_pressed(KeyCode::LeftControl) {
-            let mut asteroid = Asteroid {
-                x: screen_height() / 2.0,
-                y: screen_width() / 2.0,
-                live: true,
-            };
-            asteroids.push(asteroid);
-        }
+    let mut player = Player::default_player();
+    let mut bullet: Bullet;
+    let mut asteroid: Asteroid;
 
+    let mut frames_ticked = 0.0;
+    // game loop
+    loop {
+        asteroid = Asteroid::new_asteroid();
+
+        Bullet::bullet_logic(&mut bullets, &player);
+        Asteroid::asteroid_logic(&mut asteroids, &player);
         if is_key_down(KeyCode::Right) {
             player = player.rotate_cw();
         }
         if is_key_down(KeyCode::Left) {
             player = player.rotate_ccw();
         }
-        let direction = Bullet::direction(player.center(), player.x);
-        let mut bullet_position = Point { x: 0.0, y: 0.0 };
-        for bullet in &mut bullets {
-            bullet.x += direction.x;
-            bullet.y += direction.y;
-            bullet.new(); 
-            bullet_position = bullet.parse();
-        }
-        let mut asteroid_position = Point { x: 0.0, y: 0.0 };
-        for asteroid in &mut asteroids {
-            asteroid.move_to_player(player.parse_x());
-            asteroid.new();
-            asteroid_position = asteroid.parse();
-            if (asteroid_position.x - bullet_position.x) < 1.0
-                && (asteroid_position.y - bullet_position.y) < 1.0
-            {
-                asteroid.live = false;
-            }
 
-            if (asteroid.parse().x - player_position.x) < 1.0
-                && (asteroid.parse().y - player_position.y) < 1.0
-            {
-                //num_lives -= 1;
-                //print!("HIT, Lives remaining {}", num_lives);
-                asteroid.live = false;
-            }
-        }
-
+        frames_ticked += FRAME_RATE;
         player.draw_player();
         next_frame().await;
     }
@@ -95,17 +62,24 @@ struct Point {
     y: f32,
 }
 
-struct BetterPlayer {
-    base: [(f32, f32); 3],
-    angle: f32,
+#[derive(Clone)]
+struct Asteroid {
+    x: f32,
+    y: f32,
+    live: bool,
 }
-
-trait Thing {
-    fn new(); // diff implementations
-    fn parse(); // 2 identical implementations, 1 different
+struct Bullet {
+    x: f32,
+    y: f32,
+    direction: Direction,
+    live: bool,
 }
-
-impl Player  {
+#[derive(Clone)]
+struct Direction {
+    x: f32,
+    y: f32,
+}
+impl Player {
     fn default_player() -> Self {
         Player {
             x: Vec2 {
@@ -125,9 +99,14 @@ impl Player  {
     }
 
     fn parse_x(&self) -> Point {
-        // can also iter and give all but only need x so.. too bad!
+        // can also iter and give all but only need x so... too bad!
         let x = self.x.x;
         let y = self.x.y;
+        Point { x, y }
+    }
+    fn parse_y(&self) -> Point {
+        let x = self.y.x;
+        let y = self.y.y;
         Point { x, y }
     }
 
@@ -137,11 +116,11 @@ impl Player  {
 
         Point { x: cx, y: cy }
     }
-    fn iter(&self) -> impl Iterator<Item = &Vec2> {
+    fn iter(&self) -> impl Iterator<Item=&Vec2> {
         [&self.x, &self.y, &self.z].into_iter()
     }
 
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut Vec2> {
+    fn iter_mut(&mut self) -> impl Iterator<Item=&mut Vec2> {
         [&mut self.x, &mut self.y, &mut self.z].into_iter()
     }
 
@@ -172,17 +151,55 @@ impl Player  {
         draw_triangle(self.x, self.y, self.z, PLAYER_COLOR);
     }
 }
-struct Asteroid {
-    x: f32,
-    y: f32,
-    live: bool,
-}
+
 
 impl Asteroid {
-    fn parse(&self) -> Point {
-        Point {
-            x: self.x,
-            y: self.y,
+    /*
+    fn bullet_logic(bullets: &mut Vec<Bullet>, asteroid: &Vec<Asteroid>, player: &Player) {
+        if is_key_pressed(KeyCode::Space) {
+            let mut bullet: Bullet = Bullet::new_bullet(&player);
+            bullet.direction = Bullet::direction(player.center(), player.x);
+            bullets.push(bullet);
+        }
+
+        for bullet in &mut bullets.iter_mut() {
+            if bullet.live {
+                bullet.x += bullet.direction.x / 50.0;
+                bullet.y += bullet.direction.y / 50.0;
+                bullet.new();
+            }
+        }
+
+        bullets.retain(|bullet| bullet.live == true)
+    }
+     */
+
+    fn asteroid_logic(asteroids: &mut Vec<Asteroid>, player: &Player) {
+        if is_key_pressed(KeyCode::LeftControl) {
+            let mut asteroid = Asteroid::new_asteroid();
+            asteroids.push(asteroid);
+        }
+
+
+        for asteroid in &mut asteroids.into_iter() {
+            if !asteroid.live {
+                continue;
+            }
+            asteroid.move_to_player(player.parse_x());
+            asteroid.new();
+        }
+
+        asteroids.retain(|asteroid| {
+            asteroid.live == true
+        });
+    }
+    fn new_asteroid() -> Self {
+        Asteroid {
+            // x: screen_height(),
+            // y: screen_width(),
+            x: 600.0,
+            y: 600.0,
+            live: true,
         }
     }
 
@@ -212,24 +229,40 @@ impl Asteroid {
     }
 }
 
-struct Bullet {
-    x: f32,
-    y: f32,
-}
 
 impl Bullet {
-    fn new(&mut self) {
-        self.x += 1.0;
-        draw_circle(self.x, self.y, BULLET_SIZE, BULLET_COLOR);
-    }
-    fn parse(&self) -> Point {
-        Point {
-            x: self.x,
-            y: self.y,
+    fn new_bullet(player: &Player) -> Self {
+        Bullet {
+            x: player.x.x,
+            y: player.x.y,
+            direction: Direction { x: 1.0, y: 1.0 },
+            live: true,
         }
     }
-    fn direction(center: Point, player: Vec2) -> Point {
-        let mut dir: Point = Point { x: 0.0, y: 0.0 };
+    fn new(&mut self) {
+        draw_circle(self.x, self.y, BULLET_SIZE, BULLET_COLOR);
+    }
+
+    fn bullet_logic(bullets: &mut Vec<Bullet>, player: &Player) {
+        if is_key_pressed(KeyCode::Space) {
+            let mut bullet: Bullet = Bullet::new_bullet(&player);
+            bullet.direction = Bullet::direction(player.center(), player.x);
+            bullets.push(bullet);
+        }
+
+        for bullet in &mut bullets.iter_mut() {
+            if bullet.live {
+                bullet.x += bullet.direction.x / 50.0;
+                bullet.y += bullet.direction.y / 50.0;
+                bullet.new();
+            }
+        }
+
+        bullets.retain(|bullet| bullet.live == true)
+    }
+
+    fn direction(center: Point, player: Vec2) -> Direction {
+        let mut dir: Direction = Direction { x: 0.0, y: 0.0 };
         let cx = center.x;
         let px = player.x;
         let cy = center.y;
@@ -250,4 +283,29 @@ impl Bullet {
 
         dir
     }
+}
+
+
+fn hit_asteroid(bullet: &Bullet, asteroid: &Asteroid) -> bool {
+    if !bullet.live || !asteroid.live {
+        return false;
+    }
+    let distance_x = abs(bullet.x - asteroid.x);
+    let distance_y = abs(bullet.y - asteroid.y);
+
+    distance_x < 1.0 && distance_y < 1.0
+}
+
+fn hit_player(asteroid: &Asteroid, player: &Player) -> bool {
+    if !asteroid.live {
+        return false;
+    }
+    let distance_x = abs(player.parse_x().x - asteroid.x);
+    let distance_y = abs(player.parse_y().y - asteroid.y);
+
+    distance_x < 1.0 && distance_y < 1.0
+}
+
+fn calculate_hp() {
+
 }
