@@ -16,6 +16,7 @@ const BULLET_COLOR: Color = GREEN;
 const BULLET_SPEED: f32 = 10.0; // Lower = faster
 
 static HEALTH: std::sync::Mutex<i32> = std::sync::Mutex::new(10);
+const SPAWN_RATE: f32 = 0.5;
 
 #[macroquad::main("")]
 async fn main() {
@@ -80,7 +81,7 @@ impl Game {
     fn new() -> Self {
         Self {
             timer: 0.0,
-            interval: 0.5,
+            interval: SPAWN_RATE,
         }
     }
 
@@ -93,7 +94,6 @@ impl Game {
     }
 
     fn increase_time(&mut self, asteroids: &mut Vec<Asteroid>) {
-        dbg!("+.5sec");
         let spawn_x = rand::gen_range(0, screen_width() as i32) as f32;
         let spawn_y = rand::gen_range(0, screen_height() as i32) as f32;
 
@@ -289,7 +289,6 @@ fn check_collisions(bullets: &mut Vec<Bullet>, asteroids: &mut Vec<Asteroid>, pl
     for asteroid in asteroids.iter_mut() {
         let center = Vec2 { x: asteroid.x, y: asteroid.y };
         if is_triangle_touching_circle(center, ASTEROID_RADIUS, player.x, player.y, player.x) {
-            dbg!("True");
             asteroid.live = false;
         }
         for bullet in bullets.iter_mut() {
@@ -298,6 +297,18 @@ fn check_collisions(bullets: &mut Vec<Bullet>, asteroids: &mut Vec<Asteroid>, pl
                 asteroid.live = false;
             }
         }
+    }
+}
+
+fn lose_life() {
+    let mut lives = HEALTH.lock().expect("Error acquiring lock");
+
+    if *lives > 0 {
+        *lives -= 1;
+        println!("Lives remaining: {}", *lives);
+    } else {
+        println!("Game over!");
+        std::process::exit(1);
     }
 }
 fn hit_asteroid(bullet: &Bullet, asteroid: &Asteroid) -> bool {
@@ -345,14 +356,3 @@ fn is_triangle_touching_circle(center: Vec2, radius: f32, v1: Vec2, v2: Vec2, v3
 }
 
 
-fn lose_life() {
-    let mut lives = HEALTH.lock().expect("Error acquiring lock");
-
-    if *lives > 0 {
-        *lives -= 1;
-        println!("Lost life, Remaining lives: {}", *lives);
-    } else {
-        println!("Game over!");
-        std::process::exit(1);
-    }
-}
