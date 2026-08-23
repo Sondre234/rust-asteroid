@@ -1,26 +1,23 @@
 use bevy::math::ops::abs;
-use bevy::{
-    log::tracing_subscriber::field::debug,
-    math::ops::{cos, sin},
-};
-use macroquad::input::KeyCode::Space;
+use bevy::math::ops::{cos, sin};
 use macroquad::prelude::*;
 use std::cmp::Ordering;
 
 const PLAYER_COLOR: Color = GRAY;
-const PLAYER_SPEED: f32 = 0.01;
+const PLAYER_SPEED: f32 = 0.03;
 
 const ASTEROID_COLOR: Color = WHITE;
-const ASTEROID_RADIUS: f32 = 10.0;
+const ASTEROID_RADIUS: f32 = 30.0;
 const ASTEROID_THICKNESS: f32 = 2.0;
-const ASTEROID_SPEED: f32 = 0.5;
+const ASTEROID_SPEED: f32 = 1.0;
 
-const BULLET_SIZE: f32 = 2.0;
+const BULLET_SIZE: f32 = 1.0;
 const BULLET_COLOR: Color = GREEN;
+const BULLET_SPEED: f32 = 10.0; // Lower = faster
 
-const FRAME_RATE: f32 = 0.001;
+static HEALTH: std::sync::Mutex<i32> = std::sync::Mutex::new(10);
 
-#[macroquad::main("Main")]
+#[macroquad::main("")]
 async fn main() {
     clear_background(BLACK);
 
@@ -28,14 +25,12 @@ async fn main() {
     let mut asteroids: Vec<Asteroid> = Vec::new();
 
     let mut player = Player::default_player();
-    let mut bullet: Bullet;
-    let mut asteroid: Asteroid;
+    let mut game = Game::new();
 
-    let mut frames_ticked = 0.0;
-    // game loop
     loop {
-        asteroid = Asteroid::new_asteroid();
+        game.update(&mut asteroids);
 
+        check_collisions(&mut bullets, &mut asteroids, &player);
         Bullet::bullet_logic(&mut bullets, &player);
         Asteroid::asteroid_logic(&mut asteroids, &player);
         if is_key_down(KeyCode::Right) {
@@ -45,7 +40,7 @@ async fn main() {
             player = player.rotate_ccw();
         }
 
-        frames_ticked += FRAME_RATE;
+        Asteroid::check(&mut asteroids, &player);
         player.draw_player();
         next_frame().await;
     }
@@ -54,15 +49,12 @@ struct Player {
     x: Vec2,
     y: Vec2,
     z: Vec2,
-    angle: f32,
 }
-#[derive(Debug)]
 struct Point {
     x: f32,
     y: f32,
 }
 
-#[derive(Clone)]
 struct Asteroid {
     x: f32,
     y: f32,
@@ -74,11 +66,43 @@ struct Bullet {
     direction: Direction,
     live: bool,
 }
-#[derive(Clone)]
 struct Direction {
     x: f32,
     y: f32,
 }
+
+struct Game {
+    timer: f32,
+    interval: f32,
+}
+
+impl Game {
+    fn new() -> Self {
+        Self {
+            timer: 0.0,
+            interval: 0.5,
+        }
+    }
+
+    fn update(&mut self, asteroids: &mut Vec<Asteroid>) {
+        self.timer += get_frame_time();
+        if self.timer >= self.interval {
+            self.timer -= self.interval;
+            self.increase_time(asteroids);
+        }
+    }
+
+    fn increase_time(&mut self, asteroids: &mut Vec<Asteroid>) {
+        dbg!("+.5sec");
+        let spawn_x = rand::gen_range(0, screen_width() as i32) as f32;
+        let spawn_y = rand::gen_range(0, screen_height() as i32) as f32;
+
+        let asteroid = Asteroid::new_asteroid(spawn_x, spawn_y);
+        asteroids.push(asteroid)
+    }
+}
+
+
 impl Player {
     fn default_player() -> Self {
         Player {
@@ -94,7 +118,6 @@ impl Player {
                 x: screen_width() / 2.0 + 15.0,
                 y: screen_height() / 2.0,
             },
-            angle: PLAYER_SPEED,
         }
     }
 
@@ -104,18 +127,13 @@ impl Player {
         let y = self.x.y;
         Point { x, y }
     }
-    fn parse_y(&self) -> Point {
-        let x = self.y.x;
-        let y = self.y.y;
-        Point { x, y }
-    }
-
     fn center(&self) -> Point {
         let cx = (self.x.x + self.y.x + self.z.x) / 3.0;
         let cy = (self.x.y + self.y.y + self.z.y) / 3.0;
 
         Point { x: cx, y: cy }
     }
+    #[allow(unused)]
     fn iter(&self) -> impl Iterator<Item=&Vec2> {
         [&self.x, &self.y, &self.z].into_iter()
     }
@@ -127,8 +145,8 @@ impl Player {
     fn rotate(mut self, theta: f32) -> Self {
         let cx = (self.x.x + self.y.x + self.z.x) / 3.0;
         let cy = (self.x.y + self.y.y + self.z.y) / 3.0;
-        let cos = cos(self.angle);
-        let sin = sin(self.angle);
+        let cos = cos(theta);
+        let sin = sin(theta);
 
         for curr in self.iter_mut() {
             let (dx, dy) = (curr.x - cx, curr.y - cy);
@@ -140,11 +158,12 @@ impl Player {
 
         self
     }
-    fn rotate_cw(mut self) -> Self {
-        self.rotate(1.0)
+
+    fn rotate_cw(self) -> Self {
+        self.rotate(PLAYER_SPEED)
     }
-    fn rotate_ccw(mut self) -> Self {
-        self.rotate(-1.0)
+    fn rotate_ccw(self) -> Self {
+        self.rotate(-PLAYER_SPEED)
     }
 
     fn draw_player(&self) {
@@ -154,33 +173,15 @@ impl Player {
 
 
 impl Asteroid {
-    /*
-    fn bullet_logic(bullets: &mut Vec<Bullet>, asteroid: &Vec<Asteroid>, player: &Player) {
-        if is_key_pressed(KeyCode::Space) {
-            let mut bullet: Bullet = Bullet::new_bullet(&player);
-            bullet.direction = Bullet::direction(player.center(), player.x);
-            bullets.push(bullet);
-        }
-
-        for bullet in &mut bullets.iter_mut() {
-            if bullet.live {
-                bullet.x += bullet.direction.x / 50.0;
-                bullet.y += bullet.direction.y / 50.0;
-                bullet.new();
+    fn check(asteroids: &mut Vec<Asteroid>, player: &Player) {
+        for asteroid in asteroids.iter_mut() {
+            let center = Vec2 { x: asteroid.x, y: asteroid.y };
+            if is_triangle_touching_circle(center, ASTEROID_RADIUS, player.x, player.y, player.x) {
+                lose_life()
             }
         }
-
-        bullets.retain(|bullet| bullet.live == true)
     }
-     */
-
     fn asteroid_logic(asteroids: &mut Vec<Asteroid>, player: &Player) {
-        if is_key_pressed(KeyCode::LeftControl) {
-            let mut asteroid = Asteroid::new_asteroid();
-            asteroids.push(asteroid);
-        }
-
-
         for asteroid in &mut asteroids.into_iter() {
             if !asteroid.live {
                 continue;
@@ -193,12 +194,10 @@ impl Asteroid {
             asteroid.live == true
         });
     }
-    fn new_asteroid() -> Self {
+    fn new_asteroid(x: f32, y: f32) -> Self {
         Asteroid {
-            // x: screen_height(),
-            // y: screen_width(),
-            x: 600.0,
-            y: 600.0,
+            x,
+            y,
             live: true,
         }
     }
@@ -252,8 +251,8 @@ impl Bullet {
 
         for bullet in &mut bullets.iter_mut() {
             if bullet.live {
-                bullet.x += bullet.direction.x / 50.0;
-                bullet.y += bullet.direction.y / 50.0;
+                bullet.x += bullet.direction.x / BULLET_SPEED;
+                bullet.y += bullet.direction.y / BULLET_SPEED;
                 bullet.new();
             }
         }
@@ -285,7 +284,22 @@ impl Bullet {
     }
 }
 
-
+fn check_collisions(bullets: &mut Vec<Bullet>, asteroids: &mut Vec<Asteroid>, player: &Player) {
+    // doing it this way nukes performance, small program so who cares... too bad!
+    for asteroid in asteroids.iter_mut() {
+        let center = Vec2 { x: asteroid.x, y: asteroid.y };
+        if is_triangle_touching_circle(center, ASTEROID_RADIUS, player.x, player.y, player.x) {
+            dbg!("True");
+            asteroid.live = false;
+        }
+        for bullet in bullets.iter_mut() {
+            if hit_asteroid(&bullet, &asteroid) {
+                bullet.live = false;
+                asteroid.live = false;
+            }
+        }
+    }
+}
 fn hit_asteroid(bullet: &Bullet, asteroid: &Asteroid) -> bool {
     if !bullet.live || !asteroid.live {
         return false;
@@ -293,19 +307,52 @@ fn hit_asteroid(bullet: &Bullet, asteroid: &Asteroid) -> bool {
     let distance_x = abs(bullet.x - asteroid.x);
     let distance_y = abs(bullet.y - asteroid.y);
 
-    distance_x < 1.0 && distance_y < 1.0
+    distance_x < ASTEROID_RADIUS && distance_y < ASTEROID_RADIUS
+}
+fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let l2 = a.distance_squared(b);
+    if l2 == 0.0 { return p.distance(a); }
+
+    let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+    let t = t.clamp(0.0, 1.0);
+    let projection = a + t * (b - a);
+
+    p.distance(projection)
+}
+fn is_point_in_triangle(p: Vec2, v1: Vec2, v2: Vec2, v3: Vec2) -> bool {
+    let sign = |p1: Vec2, p2: Vec2, p3: Vec2| {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+    };
+
+    let d1 = sign(p, v1, v2);
+    let d2 = sign(p, v2, v3);
+    let d3 = sign(p, v3, v1);
+
+    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+
+    !(has_neg && has_pos)
 }
 
-fn hit_player(asteroid: &Asteroid, player: &Player) -> bool {
-    if !asteroid.live {
-        return false;
+fn is_triangle_touching_circle(center: Vec2, radius: f32, v1: Vec2, v2: Vec2, v3: Vec2) -> bool {
+    if dist_to_segment(center, v1, v2) <= radius { return true; }
+    if dist_to_segment(center, v2, v3) <= radius { return true; }
+    if dist_to_segment(center, v3, v1) <= radius { return true; }
+
+    if is_point_in_triangle(center, v1, v2, v3) { return true; }
+
+    false
+}
+
+
+fn lose_life() {
+    let mut lives = HEALTH.lock().expect("Error acquiring lock");
+
+    if *lives > 0 {
+        *lives -= 1;
+        println!("Lost life, Remaining lives: {}", *lives);
+    } else {
+        println!("Game over!");
+        std::process::exit(1);
     }
-    let distance_x = abs(player.parse_x().x - asteroid.x);
-    let distance_y = abs(player.parse_y().y - asteroid.y);
-
-    distance_x < 1.0 && distance_y < 1.0
-}
-
-fn calculate_hp() {
-
 }

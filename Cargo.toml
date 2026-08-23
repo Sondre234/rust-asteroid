@@ -6,6 +6,5 @@ edition = "2024"
 [dependencies]
 macroquad = "0.4.16"
 bevy = { version = "0.18", default-features = false, features = ["2d"] }
+rand = "0.9.5"
 
-[lints.rust]
-unused = "allow"
